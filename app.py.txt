@@ -6,7 +6,7 @@ import math
 # =====================
 # CONFIG
 # =====================
-API_KEY = "71878563a581734c09fc103bfecb7e46"
+API_KEY = st.secrets["ODDS_API_KEY"]
 SPORT = "soccer_epl"
 REGION = "uk"
 MARKET = "h2h"
@@ -136,3 +136,4 @@ for game in games:
         if model_prob >= min_prob and ev >= min_ev and odds <= max_odds:
             decision = "BET"
             confidence = "🟢 High" if ev >= 0.05 else "🟡 Med
+
