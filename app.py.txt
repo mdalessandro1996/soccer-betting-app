@@ -1,0 +1,138 @@
+import streamlit as st
+import requests
+import pandas as pd
+import math
+
+# =====================
+# CONFIG
+# =====================
+API_KEY = "71878563a581734c09fc103bfecb7e46"
+SPORT = "soccer_epl"
+REGION = "uk"
+MARKET = "h2h"
+
+BANKROLL = 1000  # 💰 change this to your real bankroll
+MAX_KELLY = 0.05  # 5% cap (VERY important)
+
+st.set_page_config(page_title="AI Soccer Betting Tool", layout="wide")
+st.title("⚽ AI Soccer Betting Dashboard")
+
+# =====================
+# USER CONTROLS
+# =====================
+min_prob = st.slider("Minimum Model Probability", 0.50, 0.80, 0.55, 0.01)
+min_ev = st.slider("Minimum Expected Value (%)", -5.0, 10.0, 1.0, 0.5) / 100
+max_odds = st.slider("Maximum Decimal Odds", 1.5, 10.0, 5.0, 0.1)
+
+# =====================
+# TEAM RATINGS (ELO)
+# =====================
+TEAM_RATINGS = {
+    "Manchester City": 1900,
+    "Arsenal": 1850,
+    "Liverpool": 1880,
+    "Chelsea": 1750,
+    "Tottenham": 1780,
+    "Manchester United": 1760,
+    "Brighton": 1700,
+}
+
+TEAM_FORM = {
+    "Manchester City": 40,
+    "Arsenal": 30,
+    "Liverpool": 35,
+    "Chelsea": -20,
+    "Tottenham": -10,
+    "Manchester United": -30,
+    "Brighton": 20,
+}
+
+HOME_ADVANTAGE = 70
+FORM_WEIGHT = 0.5
+
+# =====================
+# HELPER FUNCTIONS
+# =====================
+def american_odds(decimal_odds):
+    if decimal_odds >= 2:
+        return f"+{int((decimal_odds - 1) * 100)}"
+    else:
+        return f"-{int(100 / (decimal_odds - 1))}"
+
+def elo_win_probability(home_rating, away_rating, home_advantage=70):
+    return 1 / (1 + 10 ** (-(home_rating - away_rating + home_advantage) / 400))
+
+def implied_probability(decimal_odds):
+    return 1 / decimal_odds
+
+def kelly_fraction(prob, odds):
+    return ((prob * odds) - 1) / (odds - 1)
+
+# =====================
+# API REQUEST
+# =====================
+url = (
+    f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds/"
+    f"?apiKey={API_KEY}&regions={REGION}&markets={MARKET}"
+)
+
+response = requests.get(url)
+
+if response.status_code != 200:
+    st.error(f"API Error {response.status_code}")
+    st.write(response.text)
+    st.stop()
+
+games = response.json()
+
+# =====================
+# PROCESS GAMES
+# =====================
+results = []
+
+for game in games:
+    home = game.get("home_team")
+    away = game.get("away_team")
+    league = game.get("sport_title")
+
+    bookmakers = game.get("bookmakers", [])
+    if not bookmakers:
+        continue
+
+    markets = bookmakers[0].get("markets", [])
+    if not markets:
+        continue
+
+    outcomes = markets[0].get("outcomes", [])
+    if not outcomes:
+        continue
+
+    home_rating = TEAM_RATINGS.get(home, 1700) + TEAM_FORM.get(home, 0) * FORM_WEIGHT
+    away_rating = TEAM_RATINGS.get(away, 1700) + TEAM_FORM.get(away, 0) * FORM_WEIGHT
+
+    home_prob = elo_win_probability(home_rating, away_rating)
+    away_prob = 1 - home_prob
+
+    for outcome in outcomes:
+        team = outcome.get("name")
+        odds = outcome.get("price")
+
+        if odds is None:
+            continue
+
+        market_prob = implied_probability(odds)
+        elo_prob = home_prob if team == home else away_prob
+
+        # BLENDED PROBABILITY
+        model_prob = (0.6 * elo_prob) + (0.4 * market_prob)
+        model_prob = max(0.05, min(model_prob, 0.95))
+
+        ev = (model_prob * odds) - 1
+
+        kelly = kelly_fraction(model_prob, odds)
+        kelly = max(0, min(kelly, MAX_KELLY))
+        stake = round(BANKROLL * kelly, 2)
+
+        if model_prob >= min_prob and ev >= min_ev and odds <= max_odds:
+            decision = "BET"
+            confidence = "🟢 High" if ev >= 0.05 else "🟡 Med
